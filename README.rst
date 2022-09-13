@@ -6,10 +6,6 @@ smops
 .. image:: https://img.shields.io/pypi/v/smops.svg
         :target: https://pypi.python.org/pypi/smops
 
-.. image:: https://img.shields.io/travis/mulan-94/smops.svg
-        :target: https://travis-ci.com/mulan-94/smops
-
-
 
 smops - (aka Smooth Operator) is a python package for interpolating channelised FITS model images over larger user-specified frequency channesl. i.e if you give smops 4 channel model fits images, it will return 16 model images. For example:
 
