@@ -9,16 +9,12 @@ smops
 .. image:: https://img.shields.io/travis/mulan-94/smops.svg
         :target: https://travis-ci.com/mulan-94/smops
 
-.. image:: https://readthedocs.org/projects/smops/badge/?version=latest
-        :target: https://smops.readthedocs.io/en/latest/?version=latest
-        :alt: Documentation Status
 
 
-
-
-Python script for interpolating FITS model images over frequency. Use as
+Python script for interpolating FITS model images over frequency. Use as:
 
 .. code-block:: python
+
         usage: smops [-h] [-od] [-nthreads] [-stokes] [-mem] --ms  -ip  -co  [-order]
 
         Refine model images in frequency
@@ -47,13 +43,15 @@ Python script for interpolating FITS model images over frequency. Use as
 
 
 
-
 Credits
 -------
 
-This package is a brain child of @o-smirnov x @landmanbester and is under @ratt-ru .
+This package is a brain child of `@o-smirnov`_ x `@landmanbester`_ and is under `@ratt-ru`_.
 
 It was created with Cookiecutter_ and the `audreyr/cookiecutter-pypackage`_ project template.
 
 .. _Cookiecutter: https://github.com/audreyr/cookiecutter
 .. _`audreyr/cookiecutter-pypackage`: https://github.com/audreyr/cookiecutter-pypackage
+.. _`@o-smirnov`: https://github.com/o-smirnov
+.. _`@landmanbester`: https://github.com/landmanbester
+.. _`@ratt-ru`: https://github.com/ratt-ru
