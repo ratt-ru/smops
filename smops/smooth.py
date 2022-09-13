@@ -248,7 +248,7 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
 
     comps = da.from_array(
         np.linalg.solve(hess_comps, dirty_comps),
-        chunks={0: 1, 1:"auto", 2:"auto"})
+        chunks="auto")
 
     w = outfreqs/ref_freq
     
