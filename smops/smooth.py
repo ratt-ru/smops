@@ -255,7 +255,7 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     xeval = w[:, np.newaxis]**np.arange(spectral_poly_order)[np.newaxis, :]
 
     # autogenerate step size. x by 3 coz betaout subarray grwos by 3
-    step = (MAX_MEM*GB)//(comps.nbytes*3)
+    step = int((MAX_MEM*GB)//(comps.nbytes*0.8))
     betaout = dict()
     for _i in range(0, nchan, step):
         end = _i+step if _i+step < nchan else nchan
