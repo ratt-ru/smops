@@ -11,7 +11,14 @@ smops
 
 
 
-Python script for interpolating FITS model images over frequency. Use as:
+smops - (aka Smooth Operator) is a python package for interpolating channelised FITS model images over larger user-specified frequency channesl. i.e if you give smops 4 channel model fits images, it will return 16 model images. For example:
+
+.. code-block:: bash
+
+        smops --ms /ms/used/togen/images.ms -ip prefix-used-for-those-images -co 16 -order 4
+
+
+Its options are:
 
 .. code-block:: python
 

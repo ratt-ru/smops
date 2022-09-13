@@ -26,7 +26,7 @@ MAX_MEM = None
 def configure_logger(out_dir):
     formatter = logging.Formatter(
         datefmt='%H:%M:%S %d.%m.%Y',
-        fmt="%(asctime)s : %(levelname)s - %(message)s")
+        fmt="%(asctime)s : %(name)s - %(levelname)s - %(message)s")
     
     if not os.path.isdir(out_dir):
         os.makedirs(out_dir)
@@ -352,7 +352,7 @@ def main():
         MAX_MEM = args.max_mem
     else:
         MAX_MEM = int(.2 *psutil.virtual_memory().total)//GB
-    snitch.info(f"Setting memory to: {MAX_MEM} GB")
+    snitch.info(f"Setting memory cap to: {MAX_MEM} GB")
    
     
     if not os.path.isdir(output_dir):
