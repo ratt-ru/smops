@@ -17,7 +17,7 @@ from functools import partial
 
 
 from dask import compute
-from smops import VERSION
+from sade import VERSION
 
 
 GB = 2**30

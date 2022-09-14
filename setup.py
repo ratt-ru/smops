@@ -8,8 +8,8 @@ from setuptools import setup, find_packages
 setup(
     entry_points={
         'console_scripts': [
-            'smops=smops.smooth:main',
+            'sade=sade.smooth:main',
         ],
     },
-    packages=find_packages(include=['smops', 'smops.*']),
+    packages=find_packages(include=['sade', 'sade.*']),
 )
