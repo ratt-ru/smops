@@ -17,7 +17,7 @@ from functools import partial
 
 
 from dask import compute
-from sade import VERSION
+from smops import VERSION
 
 
 GB = 2**30
@@ -32,7 +32,7 @@ def configure_logger(out_dir="."):
         os.makedirs(out_dir)
 
     l_handler = logging.FileHandler(
-        os.path.join(out_dir, "sade.log"), mode="w")
+        os.path.join(out_dir, "smops.log"), mode="w")
     l_handler.setLevel(logging.INFO)
     l_handler.setFormatter(formatter)
 
@@ -40,7 +40,7 @@ def configure_logger(out_dir="."):
     s_handler.setLevel(logging.INFO)
     s_handler.setFormatter(formatter)
 
-    logger = logging.getLogger("sade")
+    logger = logging.getLogger("smops")
     logger.setLevel(logging.INFO)
 
     logger.addHandler(l_handler)
@@ -52,10 +52,10 @@ def get_arguments():
     parser = argparse.ArgumentParser(description="Refine model images in frequency")
     parser.add_argument("-v", "--version", action='version', version=f'%(prog)s {VERSION}')
     # parser.add_argument("-od", "--output-dir", dest="output_dir",
-    #     default="sade-output", metavar="",
+    #     default="smops-output", metavar="",
     #     help="Where to put the output files.")
     parser.add_argument("-op", "--output-prefix", dest="output_pref",
-        default="sade-interp-model", metavar="",
+        default="smops-interp-model", metavar="",
         help="What to prefix the new interpolated model name with.")
     parser.add_argument("-j", "--num-threads", dest="nthreads", default=10, metavar="",
         type=int, help="Number of threads to use while writing out output images")
