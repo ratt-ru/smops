@@ -23,7 +23,7 @@ from smops import VERSION
 GB = 2**30
 MAX_MEM = None
 
-def configure_logger(out_dir):
+def configure_logger(out_dir="."):
     formatter = logging.Formatter(
         datefmt='%H:%M:%S %d.%m.%Y',
         fmt="%(asctime)s : %(name)s - %(levelname)s - %(message)s")
@@ -32,7 +32,7 @@ def configure_logger(out_dir):
         os.makedirs(out_dir)
 
     l_handler = logging.FileHandler(
-        os.path.join(out_dir, "smooth-operator.log"), mode="w")
+        os.path.join(out_dir, "sade.log"), mode="w")
     l_handler.setLevel(logging.INFO)
     l_handler.setFormatter(formatter)
 
@@ -51,22 +51,24 @@ def configure_logger(out_dir):
 def get_arguments():
     parser = argparse.ArgumentParser(description="Refine model images in frequency")
     parser.add_argument("-v", "--version", action='version', version=f'%(prog)s {VERSION}')
-    parser.add_argument("-od", "--output-dir", dest="output_dir",
-        default="smooth-ops", metavar="",
-        help="Where to put the output files.")
-    parser.add_argument("-nthreads", dest="nthreads", default=10, metavar="",
-        type=int, help="Number of threads to use while writing out images")
-    parser.add_argument("-stokes", dest="stokes",
+    # parser.add_argument("-od", "--output-dir", dest="output_dir",
+    #     default="sade-output", metavar="",
+    #     help="Where to put the output files.")
+    parser.add_argument("-op", "--output-prefix", dest="output_pref",
+        default="sade-interp-model", metavar="",
+        help="What to prefix the new interpolated model name with.")
+    parser.add_argument("-j", "--num-threads", dest="nthreads", default=10, metavar="",
+        type=int, help="Number of threads to use while writing out output images")
+    parser.add_argument("-s", "--stokes", dest="stokes",
         default="I", metavar="", type=str,
         help="""Which stokes model to extrapolate. Write as single string e.g
         IQUV. Required when there are multiple Stokes images in a directory.
         Default 'I'.""")
     parser.add_argument("-mem", "--max-mem", dest="max_mem", default=None,
         type=int, metavar="",
-        help="Approximate memory cap in GB"
-        )
+        help="Approximate memory cap in GB")
     reqs = parser.add_argument_group("Required arguments")
-    reqs.add_argument("--ms", dest="ms_name", required=True, metavar="",
+    reqs.add_argument("-ms", "--ms", dest="ms_name", required=True, metavar="",
         help="Input MS. Used for getting reference frequency")
     reqs.add_argument("-ip", "--input-prefix", dest="input_prefix",
         required=True, metavar="",
@@ -304,7 +306,7 @@ def gen_fits_file_from_template(template_fits, center_freq, cdelt, new_data, out
     return
 
 
-def write_model_out(chan_num, chan_id, temp_fname, output_dir, cdelt, models, freqs):
+def write_model_out(chan_num, chan_id, temp_fname, out_pref, cdelt, models, freqs):
     """
     Write the new models output
 
@@ -319,8 +321,8 @@ def write_model_out(chan_num, chan_id, temp_fname, output_dir, cdelt, models, fr
         naming purposes.
     temp_fname: str
         Name of the template file that will be used
-    output_dir: str
-        Where the output will be dumped
+    out_pref: str
+        Prefix of the output models
     cdelt: float
         Channel width for this channel
     models: n-d array
@@ -332,9 +334,7 @@ def write_model_out(chan_num, chan_id, temp_fname, output_dir, cdelt, models, fr
     
     """
     # snitch.info(f"Channel number: {chan_num}, id: {chan_id}")
-    outname = os.path.basename(temp_fname)
-    outname = re.sub(r"-(\d){4}-", "-"+f"{chan_id}".zfill(4)+"-", outname)
-    outname = os.path.join(output_dir, outname)
+    outname = out_pref + '-' + f"{chan_id}".zfill(4) + "-model.fits"
     gen_fits_file_from_template(
         temp_fname, freqs[chan_id], cdelt,
         models[chan_num], outname)
@@ -344,9 +344,12 @@ def main():
     args = get_arguments().parse_args()
     global snitch, MAX_MEM
 
-    output_dir = args.output_dir
+    # output_dir = args.output_dir
+    # if not os.path.isdir(output_dir):
+    #     snitch.info(f"Creating output directory: {output_dir}")
+    #     os.makedirs(output_dir)
 
-    snitch = configure_logger(output_dir)
+    snitch = configure_logger()
     
     if args.max_mem is not None:
         MAX_MEM = args.max_mem
@@ -355,9 +358,7 @@ def main():
     snitch.info(f"Setting memory cap to: {MAX_MEM} GB")
    
     
-    if not os.path.isdir(output_dir):
-        snitch.info(f"Creating output directory: {output_dir}")
-        os.makedirs(output_dir)
+
 
     ref_freq = get_ms_ref_freq(args.ms_name)  
 
@@ -426,7 +427,7 @@ def main():
             with ThreadPoolExecutor(args.nthreads) as executor:
                 results = executor.map(
                     partial(write_model_out, temp_fname=images_list[0],
-                            output_dir=output_dir, cdelt=new_cdelt,
+                            out_pref=args.output_pref, cdelt=new_cdelt,
                             models=data, freqs=out_freqs), 
                     chan_range, chan_ids)
 
