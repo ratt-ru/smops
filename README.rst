@@ -1,24 +1,24 @@
 =====
-sade
+smops
 =====
 
 
-.. image:: https://img.shields.io/pypi/v/sade.svg
-        :target: https://pypi.python.org/pypi/sade
+.. image:: https://img.shields.io/pypi/v/smops.svg
+        :target: https://pypi.python.org/pypi/smops
 
 
-sade (aka Smooth Operator) is a python package for interpolating channelised FITS model images onto user-specified higher resolution frequency grid. For example, you can give sade a set of 4 per-subband model FITS images, and ask it to return 16 model images, which can then be fed back into e.g. wsclean_ for a predict operation. Usage:
+smops (aka Smooth Operator) is a python package for interpolating channelised FITS model images onto user-specified higher resolution frequency grid. For example, you can give smops a set of 4 per-subband model FITS images, and ask it to return 16 model images, which can then be fed back into e.g. wsclean_ for a predict operation. Usage:
 
 .. code-block:: bash
 
-        sade --ms /ms/used/togen/images.ms -ip prefix-used-for-those-images -co 16 -order 4
+        smops --ms /ms/used/togen/images.ms -ip prefix-used-for-those-images -co 16 -order 4
 
 
 Its options are:
 
 .. code-block:: python
 
-        usage: sade [-h] [-v] [-op] [-j] [-s] [-mem] -ms  -ip  -co  [-order]
+        usage: smops [-h] [-v] [-op] [-j] [-s] [-mem] -ms  -ip  -co  [-order]
 
         Refine model images in frequency
 

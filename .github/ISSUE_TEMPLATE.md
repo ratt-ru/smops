@@ -1,4 +1,4 @@
-* sade version:
+* smops version:
 * Python version:
 * Operating System:
 
