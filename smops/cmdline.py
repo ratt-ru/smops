@@ -38,7 +38,7 @@ def setup_for_clickify(schema_name):
     setup_for_clickify(schema_name)
 )
 @click.pass_context
-def get_arguments(**kwargs):
+def get_arguments(*args, **kwargs):
     arg_name_map = {
         'ms': "ms_name",
         'polynomial_order': "poly_order",
