@@ -1,0 +1,62 @@
+inputs:
+  ms:
+    dtype: MS
+    abbreviation: ms
+    metavar: ''
+    default: null
+    info: 'Input MS. Used for getting reference frequency'
+    required: True
+  input-prefix:
+    dtype: str
+    abbreviation: ip
+    metavar: ''
+    default: null
+    info: 'The input image prefix. The same as the one used for wsclean'
+    required: True
+  channels-out:
+    dtype: int
+    abbreviation: co
+    metavar: ''
+    default: null
+    info: 'Number of channels to generate out'
+    required: True
+  polynomial-order:
+    dtype: int
+    abbreviation: order
+    metavar: ''
+    default: null
+    info: 'Order of the spectral polynomial'
+    required: True
+  max-mem:
+    dtype: int
+    abbreviation: mem
+    metavar: ''
+    default: null
+    info: 'Approximate memory cap in GB. Default is 10% of available memory.'
+    required: False
+  num-threads:
+    dtype: int
+    abbreviation: j
+    metavar: ''
+    default: 10
+    info: 'Number of threads to use while writing out output images'
+    required: False
+  output_prefix:
+    dtype: str
+    abbreviation: op
+    metavar: ''
+    default: 'smops-interp-model'
+    info: 'What to prefix the new interpolated model name with.'
+    required: False
+  stokes:
+    dtype: str
+    abbreviation: s
+    metavar: ''
+    default: 'I'
+    info: 'Which stokes model to extrapolate. Write as single string e.g
+      IQUV. Required when there are multiple Stokes images in a directory.
+      Default I'
+    required: False
+
+outputs:
+  {}

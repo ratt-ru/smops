@@ -14,11 +14,9 @@ from casacore.tables import table
 from glob import glob
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-
-
 from dask import compute
-from smops import VERSION
 
+import smops.cmdline as cmd
 
 GB = 2**30
 MAX_MEM = None
@@ -46,41 +44,6 @@ def configure_logger(out_dir="."):
     logger.addHandler(l_handler)
     logger.addHandler(s_handler)
     return logger
-
-
-def get_arguments():
-    parser = argparse.ArgumentParser(description="Refine model images in frequency")
-    parser.add_argument("-v", "--version", action='version', version=f'%(prog)s {VERSION}')
-    # parser.add_argument("-od", "--output-dir", dest="output_dir",
-    #     default="smops-output", metavar="",
-    #     help="Where to put the output files.")
-    parser.add_argument("-op", "--output-prefix", dest="output_pref",
-        default="smops-interp-model", metavar="",
-        help="What to prefix the new interpolated model name with.")
-    parser.add_argument("-j", "--num-threads", dest="nthreads", default=10, metavar="",
-        type=int, help="Number of threads to use while writing out output images")
-    parser.add_argument("-s", "--stokes", dest="stokes",
-        default="I", metavar="", type=str,
-        help="""Which stokes model to extrapolate. Write as single string e.g
-        IQUV. Required when there are multiple Stokes images in a directory.
-        Default 'I'.""")
-    parser.add_argument("-mem", "--max-mem", dest="max_mem", default=None,
-        type=int, metavar="",
-        help="Approximate memory cap in GB")
-    reqs = parser.add_argument_group("Required arguments")
-    reqs.add_argument("-ms", "--ms", dest="ms_name", required=True, metavar="",
-        help="Input MS. Used for getting reference frequency")
-    reqs.add_argument("-ip", "--input-prefix", dest="input_prefix",
-        required=True, metavar="",
-        help="The input image prefix. The same as the one used for wsclean")
-    reqs.add_argument("-co", "--channels-out", dest="channels_out", metavar="",
-        required=True, type=int,
-        help="Number of channels to generate out")
-    reqs.add_argument("-order", "--polynomial-order", dest="poly_order",
-        default=4, metavar="", type=int,
-        help="Order of the spectral polynomial")
-
-    return parser
 
 
 def get_ms_ref_freq(ms_name):
@@ -341,7 +304,11 @@ def write_model_out(chan_num, chan_id, temp_fname, out_pref, cdelt, models, freq
 
 
 def main():
-    args = get_arguments().parse_args()
+    args = cmd.get_arguments(standalone_mode=False)
+
+    # This is a hack because click fails with -v and -h in standalone_mode=F
+    if isinstance(args, int):
+        sys.exit()
     global snitch, MAX_MEM
 
     # output_dir = args.output_dir
@@ -351,14 +318,14 @@ def main():
 
     snitch = configure_logger()
     
+    
+
     if args.max_mem is not None:
         MAX_MEM = args.max_mem
     else:
         MAX_MEM = int(.2 *psutil.virtual_memory().total)//GB
     snitch.info(f"Setting memory cap to: {MAX_MEM} GB")
    
-    
-
 
     ref_freq = get_ms_ref_freq(args.ms_name)  
 
