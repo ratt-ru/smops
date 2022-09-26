@@ -11,7 +11,6 @@ from scabha.schema_utils import clickify_parameters
 
 from smops import VERSION
 
-
 cur_dir = os.path.dirname(__file__)
 schema_name = os.path.join(cur_dir, "schema.yml")
 
