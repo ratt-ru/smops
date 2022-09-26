@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from typing import Dict
 
 from omegaconf import OmegaConf
-from stimela2.scabha.cargo import Parameter
-from stimela2.scabha import configuratt
-from stimela2.scabha.schema_utils import clickify_parameters
+from scabha.cargo import Parameter
+from scabha import configuratt
+from scabha.schema_utils import clickify_parameters
 
 from smops import VERSION
 
