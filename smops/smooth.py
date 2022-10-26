@@ -17,7 +17,6 @@ from functools import partial
 from dask import compute
 
 import smops.cmdline as cmd
-from ipdb import set_trace
 
 GB = 2**30
 MAX_MEM = None
