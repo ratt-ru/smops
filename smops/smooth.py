@@ -17,6 +17,7 @@ from functools import partial
 from dask import compute
 
 import smops.cmdline as cmd
+from ipdb import set_trace
 
 GB = 2**30
 MAX_MEM = None
@@ -269,7 +270,7 @@ def gen_fits_file_from_template(template_fits, center_freq, cdelt, new_data, out
     return
 
 
-def write_model_out(chan_num, chan_id, temp_fname, out_pref, cdelt, models, freqs):
+def write_model_out(chan_num, chan_id, temp_fname, out_pref, cdelt, models, freqs, stokes=None):
     """
     Write the new models output
 
@@ -297,7 +298,11 @@ def write_model_out(chan_num, chan_id, temp_fname, out_pref, cdelt, models, freq
     
     """
     # snitch.info(f"Channel number: {chan_num}, id: {chan_id}")
-    outname = out_pref + '-' + f"{chan_id}".zfill(4) + "-model.fits"
+    if stokes is None:
+        outname = out_pref + '-' + f"{chan_id}".zfill(4) + "-model.fits"
+    else:
+        outname = out_pref + '-' + f"{chan_id}".zfill(4) + f"-{stokes.upper()}-model.fits"
+
     gen_fits_file_from_template(
         temp_fname, freqs[chan_id], cdelt,
         models[chan_num], outname)
@@ -331,7 +336,6 @@ def main():
 
     snitch.info(f"Specified -stokes: {args.stokes.upper()}")
 
-    
     for stokes in args.stokes.upper():
         START_TIME = time.perf_counter()
 
@@ -339,11 +343,13 @@ def main():
         
         input_pref = os.path.abspath(args.input_prefix)
 
+        EXPLICIT_STOKES = stokes
         images_list = sorted(
             glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-{stokes}-model.fits"),
             key=os.path.getctime)
 
         if len(images_list) == 0:
+            EXPLICIT_STOKES = None
             images_list = sorted(
                 glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-model.fits"),
                 key=os.path.getctime)
@@ -390,12 +396,11 @@ def main():
             chan_range = range(len(chan_ids))
 
             results = []
-            
             with ThreadPoolExecutor(args.nthreads) as executor:
                 results = executor.map(
                     partial(write_model_out, temp_fname=images_list[0],
                             out_pref=args.output_pref, cdelt=new_cdelt,
-                            models=data, freqs=out_freqs), 
+                            models=data, freqs=out_freqs, stokes=EXPLICIT_STOKES), 
                     chan_range, chan_ids)
 
             results = list(results)
