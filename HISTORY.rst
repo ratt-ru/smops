@@ -2,6 +2,11 @@
 History
 =======
 
+0.1.4 (2022-10-26)
+------------------
+* Fix naming of Stokes parameters
+
+
 0.1.3 (2022-09-22)
 ------------------
 Switched from `argparse` to `click`
