@@ -187,10 +187,13 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     result = {"xdims": nx, "ydims": ny}
 
     # components excluding zeros
-    beta = np.ma.masked_equal(model.reshape(nband,-1), 0)
+    mask = np.any(model, axis=0)
+    beta = model*mask
+    beta = beta.reshape(nband, -1)
+    
    
     if spectral_poly_order > infreqs.size:
-        raise ValueError("spectral-poly-order can't be larger than nband")
+        raise ValueError(f"spectral-poly-order can't be larger than nband ({nband})")
 
     # we are given frequencies at bin centers, convert to bin edges
     #delta_freq is the same as CDELt value in the image header

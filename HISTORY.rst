@@ -2,6 +2,11 @@
 History
 =======
 
+0.1.5 (2022-12-7)
+------------------
+* Fixes error with ones rather than zero in the background
+
+
 0.1.4 (2022-10-26)
 ------------------
 * Fix naming of Stokes parameters
