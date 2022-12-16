@@ -2,4 +2,4 @@
 
 __author__ = AUTHOR = """L Andati"""
 __email__ = EMAIL = 'landati@duck.com'
-__version__ = VERSION = '0.1.5'
+__version__ = VERSION = '0.1.6'

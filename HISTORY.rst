@@ -2,6 +2,11 @@
 History
 =======
 
+0.1.6 (2022-12-16)
+------------------
+* Removed stimela2 as a dependency
+
+
 0.1.5 (2022-12-7)
 ------------------
 * Fixes error with ones rather than zero in the background
