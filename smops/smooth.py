@@ -190,7 +190,8 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
     mask = np.any(model, axis=0)
     beta = model*mask
     beta = beta.reshape(nband, -1)
-    
+    beta = np.ma.masked_invalid(beta)
+    beta.fill_value = np.nan
    
     if spectral_poly_order > infreqs.size:
         raise ValueError(f"spectral-poly-order can't be larger than nband ({nband})")
@@ -210,8 +211,7 @@ def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
         xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
 
 
-
-    dirty_comps = np.dot(xfit.T, wsums*beta)
+    dirty_comps = np.ma.dot(xfit.T, wsums*beta)
     hess_comps = xfit.T.dot(wsums*xfit)
 
     comps = da.from_array(
