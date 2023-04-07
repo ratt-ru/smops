@@ -1,6 +1,11 @@
 =======
 History
 =======
+0.1.7 (2023-04-07)
+------------------
+* Return stimela as a dependency
+* Allow NaN values while dealing with interpolations, issue #5
+
 
 0.1.6 (2022-12-16)
 ------------------
