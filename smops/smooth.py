@@ -81,7 +81,13 @@ def read_input_image_header(im_name):
                     info["freq_delta"] = hdu.header[f"CDELT{i}"]
 
             #get the wsum
-            info["wsum"] = hdu.header["WSCVWSUM"]
+            if hdu.header["WSCVWSUM"]!=0.0:
+                info["wsum"] = hdu.header["WSCVWSUM"]
+            elif hdu.header["WSCIMGWG"]!=0.0:
+                info["wsum"] = hdu.header["WSCIMGWG"]
+            else:
+                raise ValueError("No valid WSCVWSUM or WSCIMGWG found in header")
+            
             info["data"] = hdu.data
     return info
 
@@ -346,16 +352,12 @@ def main():
         input_pref = os.path.abspath(args.input_prefix)
 
         EXPLICIT_STOKES = stokes
-        images_list = sorted(
-            glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-{stokes}-model.fits"),
-            key=os.path.getctime)
+
+        images_list = np.sort(glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-{stokes}-model.fits"))
 
         if len(images_list) == 0:
             EXPLICIT_STOKES = None
-            images_list = sorted(
-                glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-model.fits"),
-                key=os.path.getctime)
-        
+            images_list = np.sort(glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-model.fits"))        
     
         if len(images_list) == 0:
             snitch.warning("No image files were found")
@@ -384,12 +386,10 @@ def main():
         w_sums = w_sums[:, np.newaxis]
         input_center_freqs = np.array([item["freq"] for item in im_heads])
 
-
         mod_out = interp_cube(model, w_sums, input_center_freqs,
                                     out_freqs, ref_freq, args.poly_order)
         mod_data = mod_out["data"]
-        
-        
+
         for chan_range, data in mod_data.items():
             data, = compute(data)
             data = data.reshape(-1, mod_out["xdims"], mod_out["ydims"])
