@@ -15,11 +15,18 @@ spectrum is a polynomial of the fitted order or lower). Also printed for each
 component: the RMS difference between the input values and the output
 channels averaged over each input sub-band.
 
+Individual clean components rarely have physical spectra, because
+deconvolution shuffles flux between neighbouring components from band to
+band. Use --box N to sum the model over an N x N pixel box around each
+position instead, which gives the integrated spectrum of the source.
+Images that are entirely NaN (e.g. a fully flagged band) are not plotted.
+
 Requires matplotlib, which is not a smops dependency:
     pip install matplotlib
 
-Example:
+Examples:
     python plot_spectra.py -ip img -op smops-interp-model -n 6
+    python plot_spectra.py -ip img -op smops-interp-model -n 6 --box 41
 """
 import argparse
 import glob
@@ -53,10 +60,28 @@ def find_files(prefix, stokes):
     return names
 
 
-def read_stack(names, pixels):
+def box_value(hdu, lead, y, x, half):
     """
-    Read frequency, width and the given (y, x) pixel values from each image,
-    without loading whole images. Sorted by frequency.
+    Value at (y, x), or the sum over a (2*half+1)^2 box centred there
+    (clipped at the image edges). NaN only if every pixel is NaN.
+    """
+    if half == 0:
+        return float(hdu.section[lead + (y, x)])
+    ny = hdu.header["NAXIS2"]
+    nx = hdu.header["NAXIS1"]
+    ys = slice(max(0, y - half), min(ny, y + half + 1))
+    xs = slice(max(0, x - half), min(nx, x + half + 1))
+    block = np.asarray(hdu.section[lead + (ys, xs)], dtype=float)
+    if np.all(np.isnan(block)):
+        return np.nan
+    return float(np.nansum(block))
+
+
+def read_stack(names, pixels, half=0):
+    """
+    Read frequency, width and the values at the given (y, x) pixels (or
+    box sums around them) from each image, without loading whole images.
+    Sorted by frequency.
     """
     rows = []
     for name in names:
@@ -66,7 +91,7 @@ def read_stack(names, pixels):
             freq = float(hdu.header[f"CRVAL{ax}"])
             width = abs(float(hdu.header[f"CDELT{ax}"]))
             lead = (0,) * (hdu.header["NAXIS"] - 2)
-            vals = np.array([hdu.section[lead + (y, x)]
+            vals = np.array([box_value(hdu, lead, y, x, half)
                              for y, x in pixels], dtype=float)
         rows.append((freq, width, vals))
     rows.sort(key=lambda r: r[0])
@@ -116,12 +141,20 @@ def main():
     p.add_argument("--pix", nargs="+", default=None, metavar="X,Y",
                    help="plot these pixels (0-based x,y) instead of the "
                         "brightest ones")
-    p.add_argument("--min-sep", type=int, default=5,
+    p.add_argument("--box", type=int, default=1, metavar="N",
+                   help="sum the model over an N x N pixel box around each "
+                        "position (N odd; default 1, i.e. single pixels)")
+    p.add_argument("--min-sep", type=int, default=50,
                    help="minimum separation in pixels between automatically "
-                        "chosen components (default 5)")
+                        "chosen components (default 50, and never less "
+                        "than the box size)")
     p.add_argument("-o", "--outfile", default="smops-spectra.png")
     args = p.parse_args()
     stokes = args.stokes.upper()
+    if args.box < 1:
+        raise SystemExit("--box must be at least 1")
+    half = args.box // 2
+    box = 2 * half + 1
 
     in_names = find_files(args.input_prefix, stokes)
     out_names = find_files(args.output_prefix, stokes)
@@ -130,13 +163,18 @@ def main():
         pixels = [tuple(int(v) for v in s.split(","))[::-1] for s in args.pix]
     else:
         summed = band_sum(in_names)
-        pixels = brightest_components(summed, args.ncomp, args.min_sep)
+        pixels = brightest_components(summed, args.ncomp,
+                                      max(args.min_sep, box))
         del summed
         if not pixels:
             raise SystemExit("Input images are all zero")
 
-    in_f, in_w, in_v = read_stack(in_names, pixels)
-    out_f, out_w, out_v = read_stack(out_names, pixels)
+    in_f, in_w, in_v = read_stack(in_names, pixels, half)
+    out_f, out_w, out_v = read_stack(out_names, pixels, half)
+    n_nan = int(np.all(np.isnan(in_v), axis=1).sum())
+    if n_nan:
+        print(f"{n_nan} input image(s) entirely NaN at these positions "
+              "(not plotted)")
     print(f"{len(in_names)} input images, {len(out_names)} output images")
 
     ncol = min(3, len(pixels))
@@ -153,7 +191,7 @@ def main():
                   label=f"smops output ({len(out_f)} ch)")
         ax.errorbar(in_f / 1e6, in_v[:, k], xerr=in_w / 2e6, fmt="o",
                     color="C3", ms=5, capsize=0, zorder=3,
-                    label=f"input ({len(in_f)} bands)")
+                    label=f"input ({np.isfinite(in_v[:, k]).sum()} bands)")
 
         # output averaged over each input band, weighted by overlap
         resid = []
@@ -161,15 +199,19 @@ def main():
             lo, hi = f - w / 2, f + w / 2
             overlap = np.clip(np.minimum(edges[1:], hi)
                               - np.maximum(edges[:-1], lo), 0, None)
-            if overlap.sum() > 0:
+            if overlap.sum() > 0 and np.isfinite(v):
                 resid.append(v - np.sum(overlap * out_v[:, k])
                              / overlap.sum())
         rms = np.sqrt(np.mean(np.square(resid))) if resid else np.nan
-        print(f"{x:6d} {y:6d} {in_v[:, k].mean():12.4g} {rms:14.4g}")
+        print(f"{x:6d} {y:6d} {np.nanmean(in_v[:, k]):12.4g} {rms:14.4g}")
 
-        ax.set_title(f"pixel x={x}, y={y}", fontsize=10)
+        if box == 1:
+            ax.set_title(f"pixel x={x}, y={y}", fontsize=10)
+            ax.set_ylabel("Model flux (Jy/pixel)")
+        else:
+            ax.set_title(f"{box}x{box} box at x={x}, y={y}", fontsize=10)
+            ax.set_ylabel("Summed model flux (Jy)")
         ax.set_xlabel("Frequency (MHz)")
-        ax.set_ylabel("Model flux (Jy/pixel)")
     for ax in axes.flat[len(pixels):]:
         ax.set_visible(False)
     axes.flat[0].legend(fontsize=8)
