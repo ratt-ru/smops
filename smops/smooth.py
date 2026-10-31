@@ -1,415 +1,249 @@
-#! /bin/python3
-import sys
-import argparse
+#!/usr/bin/env python3
 import os
-import re
-import time
+import sys
+import glob
 import logging
-import psutil
-import numpy as np
-import dask.array as da
-
-from astropy.io import fits
-from casacore.tables import table
-from glob import glob
+import time
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-from dask import compute
 
-import smops.cmdline as cmd
+import click
+import numpy as np
+import psutil
+from astropy.io import fits
+
+from smops.spectral import (
+    band_edges, chunk_size, eval_spectral_poly, fit_spectral_poly,
+    gen_out_freqs)
 
 GB = 2**30
-MAX_MEM = None
+DEFAULT_MEM_FRACTION = 0.2
+
+log = logging.getLogger("smops")
+
 
 def configure_logger(out_dir="."):
     formatter = logging.Formatter(
         datefmt='%H:%M:%S %d.%m.%Y',
         fmt="%(asctime)s : %(name)s - %(levelname)s - %(message)s")
-    
-    if not os.path.isdir(out_dir):
-        os.makedirs(out_dir)
+
+    os.makedirs(out_dir, exist_ok=True)
 
     l_handler = logging.FileHandler(
         os.path.join(out_dir, "smops.log"), mode="w")
-    l_handler.setLevel(logging.INFO)
     l_handler.setFormatter(formatter)
 
     s_handler = logging.StreamHandler()
-    s_handler.setLevel(logging.INFO)
     s_handler.setFormatter(formatter)
 
-    logger = logging.getLogger("smops")
-    logger.setLevel(logging.INFO)
-
-    logger.addHandler(l_handler)
-    logger.addHandler(s_handler)
-    return logger
-
-
-def get_ms_ref_freq(ms_name):
-    snitch.info("Getting reference frequency from MS")
-    with table(f"{ms_name}::SPECTRAL_WINDOW", ack=False) as spw_subtab:
-        ref_freq, = spw_subtab.getcol("REF_FREQUENCY")
-    return ref_freq
+    log.handlers.clear()
+    log.setLevel(logging.INFO)
+    log.addHandler(l_handler)
+    log.addHandler(s_handler)
+    return log
 
 
-def read_input_image_header(im_name):
+def freq_axis(header):
+    """FITS axis number (1-based) of the frequency axis, or None."""
+    for i in range(1, header.get("NAXIS", 0) + 1):
+        ctype = str(header.get(f"CTYPE{i}", "")).upper()
+        cunit = str(header.get(f"CUNIT{i}", "")).strip().lower()
+        if ctype.startswith("FREQ") or cunit == "hz":
+            return i
+    return None
+
+
+def read_input_image(im_name):
     """
-    Parameters
-    ----------
-    im_name: :obj:`string`
-        Image name
+    Read a wsclean model image.
 
-    Output
-    ------
+    Returns
+    -------
     info: dict
-        Dictionary containing center frequency, frequency delta and image wsum
+        name, freq (Hz), freq_delta (Hz), wsum, data (2D array), shape
+        (original data shape)
     """
-    snitch.debug(f"Reading image: {im_name} header")
-    info = {}
+    log.debug(f"Reading image: {im_name}")
+    with fits.open(im_name, mode="readonly") as hdu_list:
+        hdu = hdu_list[0]
+        header = hdu.header
+        ax = freq_axis(header)
+        if ax is None:
+            raise ValueError(f"{im_name}: no frequency axis found in header")
 
-    info["name"] = im_name
-   
-    with fits.open(im_name, readonly=True) as hdu_list:
-        # print(f"There are:{len(hdu_list)} HDUs in this image")
-        for hdu in hdu_list:
-            naxis = hdu.header["NAXIS"]
-            # get the center frequency
-            for i in range(1, naxis+1):
-                if hdu.header[f"CUNIT{i}"].lower() == "hz":
-                    info["freq"] = hdu.header[f"CRVAL{i}"]
-                    info["freq_delta"] = hdu.header[f"CDELT{i}"]
+        # copy, so nothing refers to the (possibly memory-mapped) file
+        # once it is closed
+        data = np.array(hdu.data)
+        if data.ndim < 2 or np.prod(data.shape[:-2]) != 1:
+            raise ValueError(
+                f"{im_name}: expected a single image plane, got data of "
+                f"shape {data.shape}")
 
-            #get the wsum
-            info["wsum"] = hdu.header["WSCVWSUM"]
-            info["data"] = hdu.data
-    return info
+        wsum = header.get("WSCVWSUM")
+        if wsum is None:
+            log.warning(f"{im_name}: no WSCVWSUM in header, using weight 1")
+            wsum = 1.0
+
+        return {
+            "name": im_name,
+            "freq": float(header[f"CRVAL{ax}"]),
+            "freq_delta": abs(float(header[f"CDELT{ax}"])),
+            "wsum": float(wsum),
+            "data": data.reshape(data.shape[-2:]),
+            "shape": data.shape,
+        }
 
 
-def get_band_start_and_band_width(freq_delta, first_freq, last_freq):
+def find_images(input_prefix, stokes, allow_unlabelled):
     """
-    Parameters
-    ----------
-    freq_delta: float
-        The value contained in cdelt. Difference between the different
-        consecutive bands
-    first_freq: float
-        Center frequency for the very first image in the band. ie. band 0 image
-    last_freq: float
-        Center frequency for the last image in the band. ie. band -1 image
+    Find the wsclean channel model images for one Stokes parameter.
 
-    Output
-    ------
-    band_start: float
-        Where the band starts
-    band_width: float
-        Size of the band
+    Returns
+    -------
+    names: list of str
+    labelled: bool
+        Whether the files carry a Stokes label in their names.
     """
-    snitch.info("Calculating the band starting frequency and  band width")
-    band_delta = freq_delta/2
-    band_start = first_freq - band_delta
-    band_stop = last_freq + band_delta
-    band_width = band_stop - band_start
-    return band_start, band_width
+    pref = glob.escape(os.path.abspath(input_prefix))
+    chan = "[0-9]" * 4
+    names = glob.glob(f"{pref}-{chan}-{stokes}-model.fits")
+    if names:
+        return names, True
+    if allow_unlabelled:
+        names = glob.glob(f"{pref}-{chan}-model.fits")
+        if names:
+            return names, False
+    return [], True
 
 
-def gen_out_freqs(band_start, band_width, n_bands, return_cdelt=False):
-    """
-    Parameters
-    ----------
-    band_start: int or float
-        Where the band starts from
-    band_width: int or float
-        Size of the band
-    n_bands: int
-        Number of output bands you want
-    return_cdelt: bool
-        Whether or not to return cdelt
-
-    Output
-    ------
-    center_freqs: list or array
-        iterable containing output center frequencies
-    cdelt: int or float
-        Frequency delta
-    """
-    snitch.info("Generating output center frequencies")
-    cdelt = band_width/n_bands
-    first_center_freq = band_start + (cdelt/2)
-
-    center_freqs = [first_center_freq]
-    for i in range(n_bands-1):
-        center_freqs.append(center_freqs[-1] + cdelt)
-
-    center_freqs = np.array(center_freqs)
-    if return_cdelt:
-        return center_freqs, cdelt
-    else:
-        return center_freqs
+def write_model(template_header, template_shape, freq_ax, centre_freq,
+                cdelt, data, out_name):
+    """Write one output channel, using the first input image's header."""
+    header = template_header.copy()
+    header[f"CRVAL{freq_ax}"] = centre_freq
+    header[f"CDELT{freq_ax}"] = cdelt
+    out = np.asarray(data, dtype=np.float32).reshape(template_shape)
+    fits.PrimaryHDU(data=out, header=header).writeto(out_name, overwrite=True)
+    log.debug(f"New file written to: {out_name}")
+    return out_name
 
 
-def concat_models(models):
-    """Concatenate/stack model images over frequency axis"""
-    snitch.info(f"Concatenating {len(models)} model images")
-    return np.concatenate(models, axis=1).squeeze()
-
-
-def interp_cube(model, wsums, infreqs, outfreqs, ref_freq, spectral_poly_order):
-    """
-    Interpolate the model into desired frequency
-
-    Parameters
-    ----------
-
-    model: ndarray
-        model array containing model image's data for each stokes parameter
-    wsums: list or array
-        concatenated wsums for each of stokes parameters
-    infreqs: list or array
-        a list of input frequencies for the images?
-    outfreqs: int
-        Number of output frequencies i.e how many frequencies you want out
-    ref_freq: float
-        The reference frequency. A frequency representative of this 
-        spectral window, usually the sky frequency corresponding to the DC edge
-        of the baseband. Used by the calibration system if a fixed scaling
-        frequency is required or **in algorithms to identify the observing band**. 
-        see https://casa.nrao.edu/casadocs/casa-5.1.1/reference-material/measurement-set
-    spectral_poly_order: int
-        the order of the spectral polynomial
-    """
-
-    snitch.info("Starting frequency interpolation")
-
-    nchan = outfreqs.size
-    nband, nx, ny = model.shape
-
-    result = {"xdims": nx, "ydims": ny}
-
-    # components excluding zeros
-    mask = np.any(model, axis=0)
-    beta = model*mask
-    beta = beta.reshape(nband, -1)
-    beta = np.ma.masked_invalid(beta)
-    beta.fill_value = np.nan
-   
-    if spectral_poly_order > infreqs.size:
-        raise ValueError(f"spectral-poly-order can't be larger than nband ({nband})")
-
-    # we are given frequencies at bin centers, convert to bin edges
-    #delta_freq is the same as CDELt value in the image header
-    delta_freq = infreqs[1] - infreqs[0] 
-
-    wlow = (infreqs - delta_freq/2.0)/ref_freq
-    whigh = (infreqs + delta_freq/2.0)/ref_freq
-    wdiff = whigh - wlow
-
-    # set design matrix for each component
-    # look at Offringa and Smirnov 1706.06786
-    xfit = np.zeros([nband, spectral_poly_order])
-    for i in range(1, spectral_poly_order+1):
-        xfit[:, i-1] = (whigh**i - wlow**i)/(i*wdiff)
-
-
-    dirty_comps = np.ma.dot(xfit.T, wsums*beta)
-    hess_comps = xfit.T.dot(wsums*xfit)
-
-    comps = da.from_array(
-        np.linalg.solve(hess_comps, dirty_comps),
-        chunks="auto")
-
-    w = outfreqs/ref_freq
-    
-    xeval = w[:, np.newaxis]**np.arange(spectral_poly_order)[np.newaxis, :]
-
-    # autogenerate step size. x by 3 coz betaout subarray grwos by 3
-    step = int((MAX_MEM*GB)//(comps.nbytes*0.8))
-    betaout = dict()
-    for _i in range(0, nchan, step):
-        end = _i+step if _i+step < nchan else nchan
-        betaout[_i, end] = da.dot(xeval[_i:end], comps).rechunk("auto")
-        if "nbytes" not in result:
-            result["nbytes"] = betaout[_i, end].nbytes
-        snitch.info(f"Selecting channel {_i:4} >> {end:2}"); 
-    result["data"] = betaout
-    
-    return result
-
-
-def gen_fits_file_from_template(template_fits, center_freq, cdelt, new_data, out_fits):
-    """
-    Generate new FITS file from some template file
-    
-    template_fits: str
-        Name of the file to use as template
-    center_freq: float
-        New center frequency for this image
-    cdelt: float
-        Channel widths between successive channels
-    new_data: ndarray
-        The new interpolated data
-    out_fits: str
-        Name of the new output file
-    """
-    with fits.open(template_fits, mode="readonly") as temp_hdu_list:
-        temp_hdu, = temp_hdu_list
-
-        #update the center frequency
-        for i in range(1, temp_hdu.header["NAXIS"]+1):
-            if temp_hdu.header[f"CUNIT{i}"].lower() == "hz":
-                temp_hdu.header[f"CRVAL{i}"] = center_freq
-                temp_hdu.header[f"CDELT{i}"] = cdelt
-      
-        #update with the new data
-        if temp_hdu.data.ndim == 4:
-            temp_hdu.data[0,0] = new_data
-        elif temp_hdu.data.ndim == 3:
-            temp_hdu.data[0] = new_data
-        elif temp_hdu.data.ndim == 2:
-            temp_hdu.data = new_data
-        temp_hdu_list.writeto(out_fits, overwrite=True)
-    snitch.info(f"New file written to: {out_fits}")
-    return
-
-
-def write_model_out(chan_num, chan_id, temp_fname, out_pref, cdelt, models, freqs, stokes=None):
-    """
-    Write the new models output
-
-    Parameters
-    ----------
-    chan_num: int
-        Number of the channel in the current model sub-cube. Will always
-        start from 0. This is based on the current workflow where we chunk the
-        new array into subs for better memory mgmnt
-    chan_id: int
-        Actual channel number in the 'grand scheme' of things. Mostly for 
-        naming purposes.
-    temp_fname: str
-        Name of the template file that will be used
-    out_pref: str
-        Prefix of the output models
-    cdelt: float
-        Channel width for this channel
-    models: n-d array
-        Model cube containing data for various channels. The channel number will
-        be selected using :obj:`chan_num` above
-    freqs: n-d array
-        Array containing the corresponding frequencies. Selected using
-        :obj:`chan_id` above
-    
-    """
-    # snitch.info(f"Channel number: {chan_num}, id: {chan_id}")
+def output_name(prefix, chan, stokes=None):
     if stokes is None:
-        outname = out_pref + '-' + f"{chan_id}".zfill(4) + "-model.fits"
+        return f"{prefix}-{chan:04d}-model.fits"
+    return f"{prefix}-{chan:04d}-{stokes}-model.fits"
+
+
+def smooth_stokes(input_prefix, stokes, allow_unlabelled, nchan_out, order,
+                  output_prefix, nthreads, max_mem_bytes, ref_freq=None):
+    """Interpolate the models of a single Stokes parameter."""
+    names, labelled = find_images(input_prefix, stokes, allow_unlabelled)
+    if not names:
+        raise FileNotFoundError(
+            f"No model images found for Stokes {stokes} with prefix "
+            f"{input_prefix}")
+
+    images = sorted((read_input_image(n) for n in names),
+                    key=lambda im: im["freq"])
+    log.info(f"Found {len(images)} model images for Stokes {stokes}:")
+    for im in images:
+        log.info(f"  {os.path.basename(im['name'])}  "
+                 f"{im['freq'] / 1e6:.4f} MHz")
+
+    shapes = {im["data"].shape for im in images}
+    if len(shapes) > 1:
+        raise ValueError(f"Input images have different shapes: {shapes}")
+    freqs = np.array([im["freq"] for im in images])
+    if np.unique(freqs).size != freqs.size:
+        raise ValueError("Some input images share the same frequency")
+    widths = np.array([im["freq_delta"] for im in images])
+    wsums = np.array([im["wsum"] for im in images])
+
+    bstart, bstop = band_edges(freqs, widths)
+    if ref_freq is None:
+        ref_freq = 0.5 * (bstart + bstop)
+    log.info(f"Band: {bstart / 1e6:.4f} - {bstop / 1e6:.4f} MHz, "
+             f"reference frequency {ref_freq / 1e6:.4f} MHz")
+
+    out_freqs, out_width = gen_out_freqs(bstart, bstop, nchan_out)
+
+    cube = np.stack([im["data"] for im in images])
+    ny, nx = cube.shape[1:]
+    log.info(f"Fitting {order}-term polynomial to {len(images)} images "
+             f"of {ny}x{nx} pixels")
+    coeffs = fit_spectral_poly(cube, wsums, freqs, widths, ref_freq, order)
+    del cube
+
+    with fits.open(images[0]["name"], mode="readonly") as hdul:
+        template_header = hdul[0].header.copy()
+    template_shape = images[0]["shape"]
+    fax = freq_axis(template_header)
+    out_stokes = stokes if labelled else None
+
+    step = chunk_size(ny * nx, nchan_out, max_mem_bytes)
+    written = []
+    for start in range(0, nchan_out, step):
+        stop = min(start + step, nchan_out)
+        log.info(f"Computing output channels {start} - {stop - 1}")
+        chunk = eval_spectral_poly(coeffs, out_freqs[start:stop], out_width,
+                                   ref_freq)
+        with ThreadPoolExecutor(nthreads) as executor:
+            futures = [
+                executor.submit(
+                    write_model, template_header, template_shape, fax,
+                    out_freqs[chan], out_width, chunk[chan - start],
+                    output_name(output_prefix, chan, out_stokes))
+                for chan in range(start, stop)]
+            written.extend(f.result() for f in futures)
+    log.info(f"Wrote {len(written)} images, "
+             f"{os.path.basename(written[0])} ... "
+             f"{os.path.basename(written[-1])}")
+    return written
+
+
+def main(argv=None):
+    import smops.cmdline as cmd
+
+    try:
+        args = cmd.get_arguments.main(args=argv, prog_name="smops",
+                                      standalone_mode=False)
+    except click.ClickException as e:
+        e.show()
+        sys.exit(e.exit_code)
+    except click.exceptions.Abort:
+        sys.exit(1)
+    # --help / --version return an exit code rather than the arguments
+    if not isinstance(args, dict):
+        sys.exit(0)
+
+    configure_logger()
+
+    if args["max_mem"] is not None:
+        max_mem_bytes = args["max_mem"] * GB
     else:
-        outname = out_pref + '-' + f"{chan_id}".zfill(4) + f"-{stokes.upper()}-model.fits"
+        max_mem_bytes = DEFAULT_MEM_FRACTION * psutil.virtual_memory().total
+    log.info(f"Setting memory cap to: {max_mem_bytes / GB:.2f} GB")
 
-    gen_fits_file_from_template(
-        temp_fname, freqs[chan_id], cdelt,
-        models[chan_num], outname)
+    stokes_list = args["stokes"].upper()
+    log.info(f"Specified -stokes: {stokes_list}")
 
-
-def main():
-    args = cmd.get_arguments(standalone_mode=False)
-
-    # This is a hack because click fails with -v and -h in standalone_mode=F
-    if isinstance(args, int):
-        sys.exit()
-    global snitch, MAX_MEM
-
-    # output_dir = args.output_dir
-    # if not os.path.isdir(output_dir):
-    #     snitch.info(f"Creating output directory: {output_dir}")
-    #     os.makedirs(output_dir)
-
-    snitch = configure_logger()
-    
-    
-
-    if args.max_mem is not None:
-        MAX_MEM = args.max_mem
-    else:
-        MAX_MEM = int(.2 *psutil.virtual_memory().total)//GB
-    snitch.info(f"Setting memory cap to: {MAX_MEM} GB")
-   
-
-    ref_freq = get_ms_ref_freq(args.ms_name)  
-
-    snitch.info(f"Specified -stokes: {args.stokes.upper()}")
-
-    for stokes in args.stokes.upper():
-        START_TIME = time.perf_counter()
-
-        snitch.info(f"Running Stoke's {stokes}")
-        
-        input_pref = os.path.abspath(args.input_prefix)
-
-        EXPLICIT_STOKES = stokes
-        images_list = sorted(
-            glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-{stokes}-model.fits"),
-            key=os.path.getctime)
-
-        if len(images_list) == 0:
-            EXPLICIT_STOKES = None
-            images_list = sorted(
-                glob(f"{input_pref}-[0-9][0-9][0-9][0-9]-model.fits"),
-                key=os.path.getctime)
-        
-    
-        if len(images_list) == 0:
-            snitch.warning("No image files were found")
-            sys.exit(-1)
-        else:
-            snitch.info(f"Found {len(images_list)} matching selections")
-            for _im in images_list:
-                snitch.info(os.path.basename(_im))
-            snitch.info("."*len(os.path.basename(_im)))
-
-        im_heads = []
-
-        for im_name in images_list:
-            im_header = read_input_image_header(im_name)
-            im_heads.append(im_header)
-        
-        bstart, bwidth = get_band_start_and_band_width(
-            im_heads[0]["freq_delta"], im_heads[0]["freq"], im_heads[-1]["freq"])
-
-        model = concat_models([image_item["data"] for image_item in im_heads])
-        out_freqs = gen_out_freqs(bstart, bwidth, args.channels_out)
-        new_cdelt = out_freqs[1] - out_freqs[0]
-
-        # gather the wsums and center frequencies
-        w_sums = np.array([item["wsum"] for item in im_heads])
-        w_sums = w_sums[:, np.newaxis]
-        input_center_freqs = np.array([item["freq"] for item in im_heads])
-
-
-        mod_out = interp_cube(model, w_sums, input_center_freqs,
-                                    out_freqs, ref_freq, args.poly_order)
-        mod_data = mod_out["data"]
-        
-        
-        for chan_range, data in mod_data.items():
-            data, = compute(data)
-            data = data.reshape(-1, mod_out["xdims"], mod_out["ydims"])
-
-            chan_ids = range(*chan_range)
-            chan_range = range(len(chan_ids))
-
-            results = []
-            with ThreadPoolExecutor(args.nthreads) as executor:
-                results = executor.map(
-                    partial(write_model_out, temp_fname=images_list[0],
-                            out_pref=args.output_pref, cdelt=new_cdelt,
-                            models=data, freqs=out_freqs, stokes=EXPLICIT_STOKES), 
-                    chan_range, chan_ids)
-
-            results = list(results)
-            snitch.info("Chunk change over") 
-            snitch.info("*"*50)
-        
-        snitch.info(f"Stoke's {stokes} finished in {time.perf_counter() - START_TIME:.3f} secs")
+    for stokes in stokes_list:
+        t0 = time.perf_counter()
+        log.info(f"Running Stokes {stokes}")
+        try:
+            smooth_stokes(
+                args["input_prefix"], stokes,
+                allow_unlabelled=(stokes == "I"),
+                nchan_out=args["channels_out"],
+                order=args["polynomial_order"],
+                output_prefix=args["output_prefix"],
+                nthreads=args["num_threads"],
+                max_mem_bytes=max_mem_bytes,
+                ref_freq=args["ref_freq"])
+        except (FileNotFoundError, ValueError) as e:
+            log.error(str(e))
+            sys.exit(1)
+        log.info(f"Stokes {stokes} finished in "
+                 f"{time.perf_counter() - t0:.3f} secs")
 
 
 if __name__ == "__main__":

@@ -1,51 +1,44 @@
-import os
 import click
-
-from dataclasses import dataclass
-from typing import Dict
-
-from omegaconf import OmegaConf
-from scabha.cargo import Parameter
-from scabha import configuratt
-from scabha.schema_utils import clickify_parameters
 
 from smops import VERSION
 
-cur_dir = os.path.dirname(__file__)
-schema_name = os.path.join(cur_dir, "schema.yml")
 
-def setup_for_clickify(schema_name):
-    """
-    Guess who's coming to dinner 
+def _positive(ctx, param, value):
+    if value is not None and value < 1:
+        raise click.BadParameter("must be at least 1")
+    return value
 
-    Prepare schema in scabha terms for clickfy.
-    Refer to: scabha2/scabha/schema_utils.py
-    """
-    @dataclass
-    class Taboo:
-        inputs: Dict[str, Parameter]
-        outputs: Dict[str, Parameter]
 
-    arg_struct = OmegaConf.structured(Taboo)
-    nested_args = configuratt.load_nested([schema_name], structured=arg_struct)
-    schema = OmegaConf.create(nested_args[0]).schema
-    return schema
-
-@click.command()
-@click.version_option(VERSION, "-v", "--version", is_flag=True)
-@clickify_parameters(
-    setup_for_clickify(schema_name)
-)
-@click.pass_context
-def get_arguments(*args, **kwargs):
-    arg_name_map = {
-        'ms': "ms_name",
-        'polynomial_order': "poly_order",
-        'num_threads': "nthreads",
-        'output_prefix': "output_pref",
-        }
-    for old_key, new_key in arg_name_map.items():
-        kwargs[new_key] = kwargs.pop(old_key)    
-    opts = OmegaConf.create(kwargs)
-    return opts
-    
+@click.command(context_settings={"help_option_names": ["-h", "--help"]},
+               help="Refine model images in frequency")
+@click.version_option(VERSION, "-v", "--version")
+@click.option("-ip", "--input-prefix", required=True, metavar="",
+              help="The input image prefix. The same as the one used for "
+                   "wsclean")
+@click.option("-co", "--channels-out", type=int, required=True, metavar="",
+              callback=_positive,
+              help="Number of channels to generate out")
+@click.option("-order", "--polynomial-order", type=int, required=True,
+              metavar="", callback=_positive,
+              help="Order of the spectral polynomial, i.e. the number of "
+                   "terms (1 = constant, 2 = linear, ...). Can't exceed the "
+                   "number of input images.")
+@click.option("-op", "--output-prefix", default="smops-interp-model",
+              show_default=True, metavar="",
+              help="What to prefix the new interpolated model name with.")
+@click.option("-j", "--num-threads", type=int, default=10, show_default=True,
+              metavar="", callback=_positive,
+              help="Number of threads to use while writing out output images")
+@click.option("-mem", "--max-mem", type=float, default=None, metavar="",
+              help="Approximate memory cap in GB for each chunk of output "
+                   "channels. Default is 20% of total system memory.")
+@click.option("-s", "--stokes", default="I", show_default=True, metavar="",
+              help="Which Stokes models to interpolate. Write as a single "
+                   "string e.g. IQUV. Unlabelled wsclean models (no Stokes "
+                   "in the file name) are used for I only.")
+@click.option("-rf", "--ref-freq", type=float, default=None, metavar="",
+              help="Reference frequency (Hz) for the polynomial. Does not "
+                   "change the result, only numerical conditioning. "
+                   "Default is the centre of the band.")
+def get_arguments(**kwargs):
+    return kwargs
